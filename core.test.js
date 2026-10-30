@@ -50,6 +50,23 @@ test('multiple explicit HTTPS origins remain isolated by original Host', () => {
   assert.throws(() => authorize(request({ headers: { host: 'evil.test', origin: 'https://evil.test' } }), connection, origins), { status: 403 });
 });
 
+test('HTTP loopback works alongside HTTPS configuration without weakening admission or origin', () => {
+  for (const config of ['https://public.test', ['https://public.test']]) {
+    for (const host of ['localhost:3080', '127.0.0.1:3080', '[::1]:3080', 'localhost']) {
+      const req = request({ headers: { host, origin: `http://${host}` } });
+      assert.doesNotThrow(() => authorize(req, connection, config));
+      assert.throws(() => authorize(req, { admit: () => ({ rejection: 401 }) }, config), { status: 401 });
+    }
+    for (const host of ['192.168.1.20:3080', '100.64.0.1:3080', 'localhost.evil.test:3080', '127.0.0.1.evil.test:3080']) {
+      assert.throws(() => authorize(request({ headers: { host, origin: `http://${host}` } }), connection, config), { status: 403 });
+    }
+    for (const origin of ['http://localhost:3081', 'http://127.0.0.1:3080', 'https://localhost:3080', 'null', undefined]) {
+      assert.throws(() => authorize(request({ headers: { host: 'localhost:3080', origin } }), connection, config), { status: 403 });
+    }
+    assert.throws(() => authorize(request({ headers: { host: 'localhost:3080', origin: 'http://localhost:3080', 'sec-fetch-site': 'cross-site' } }), connection, config), { status: 403 });
+  }
+});
+
 test('request parser enforces JSON and both declared and streaming limits', async () => {
   function body(text, headers = {}) {
     const req = Readable.from([Buffer.from(text)]);

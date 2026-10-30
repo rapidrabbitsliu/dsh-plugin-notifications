@@ -46,6 +46,14 @@ Set `vapidSubject` to a valid HTTPS contact URL or real contact email. Default i
 
 Open Settings → Notifications, enable this device and accept the browser permission. The sidebar bell controls the same state. Each origin/device subscribes separately; all subscribed devices receive this Host's events (not a per-user multi-tenant subscription system). Test delivery before relying on it. Unsubscribe using the device toggle; browser permission revocation may require browser/system settings.
 
+### Local use without a domain / 无域名本机使用
+
+Use `http://localhost:<port>`, `http://127.0.0.1:<port>` or `http://[::1]:<port>` on the DSH machine. Supporting browsers treat loopback HTTP as trustworthy, so no domain/certificate is required. The plugin automatically permits exact same-origin loopback POSTs even when HTTPS public origins are configured; DSH owner authentication, original Host checks and cross-site rejection remain enforced. Browser notification permission is still required. Different ports/hosts are separate origins and need separate subscriptions.
+
+This exemption does not cover LAN/Tailscale IPs or custom hostnames; remote devices need trusted HTTPS. A phone's localhost refers to that phone, not your DSH computer. iOS Home Screen requirements still apply. Server-to-provider push traffic remains HTTPS.
+
+本机可用上述 HTTP 回环地址开启通知，无需配置域名或证书；不放宽鉴权、跨站或端口匹配检查。远程手机访问电脑仍须 HTTPS，不能用手机的 localhost 代替电脑地址。
+
 ### Platform requirements
 
 | Platform | Requirements | Real-device status |

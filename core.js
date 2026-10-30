@@ -56,7 +56,11 @@ export function authorize(req, connection, publicOrigin) {
     const host = header(req, 'host');
     let expected;
     try {
-      expected = Array.isArray(publicOrigin)
+      const local = new URL(`http://${host}`);
+      const loopback = typeof host === 'string' && local.host === host
+        && ['localhost', '127.0.0.1', '[::1]'].includes(local.hostname);
+      // Exact original authority only; no forwarded-host trust or LAN HTTP exemption.
+      expected = loopback && !req.socket?.encrypted && origin === local.origin ? local.origin : Array.isArray(publicOrigin)
         ? publicOrigin.find(value => new URL(value).host === host)
         : publicOrigin ?? normalizeOrigin(`${req.socket?.encrypted ? 'https:' : 'http:'}//${host}`);
     }
