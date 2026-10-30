@@ -182,7 +182,7 @@ test('event listeners prepend waterfalls, return next unchanged, never await pus
   assert.notEqual(sent[0].tag, sent[1].tag);
   assert.equal(JSON.stringify(sent).includes('TOP SECRET'), false);
   assert.equal(JSON.stringify(sent).includes('PRIVATE'), false);
-  for (const payload of sent) assert.deepEqual(Object.keys(payload).sort(), ['body', 'tag', 'title', 'url']);
+  for (const payload of sent) assert.deepEqual(Object.keys(payload).sort(), ['body', 'kind', 'tag', 'title', 'url']);
   const thrown = Error('next rejection');
   assert.throws(() => listeners.get('approval/request').listener({}, () => { throw thrown; }), e => e === thrown);
 });
@@ -217,6 +217,42 @@ test('synchronously throwing notifier cannot swallow next; rejected pushes are h
     assert.equal(listeners.get('user-questions/request')({}, () => result), result);
     await new Promise(resolve => setImmediate(resolve));
   }
+});
+
+test('quiet defaults filter intermediate events per device and preferences survive reopening', async t => {
+  const { store, directory } = await fixture(t);
+  await store.subscribe(subscription());
+  const sent = [];
+  const notifier = createNotifier({ store, webPush: { sendNotification: async (_sub, body) => sent.push(JSON.parse(body)) } });
+  for (const kind of ['running', 'error', 'tool-error', 'turn', 'stopped', 'approval', 'question']) await notifier.dispatch({ kind });
+  assert.deepEqual(sent.map(x => x.kind), ['stopped', 'approval', 'question']);
+  await store.preferences(endpoint, { running: true, stopped: false });
+  assert.equal(await notifier.dispatch({ kind: 'stopped' }), false);
+  assert.equal(await notifier.dispatch({ kind: 'running' }), true);
+  assert.throws(() => store.preferences(endpoint, { running: 'yes' }), { status: 400 });
+  const reopened = await openStore({ storageDir: directory, webPush });
+  assert.equal(reopened.preferences(endpoint).running, true);
+  assert.equal(reopened.preferences(endpoint).stopped, false);
+});
+
+test('stopped notifications coalesce turn end/error and cancel on resumed processing', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const listeners = new Map(), sent = [], cleanups = [];
+  registerListeners({ on: (name, cb) => listeners.set(name, cb), effect: fn => { cleanups.push(fn()); } }, { dispatch: value => { sent.push(value); return Promise.resolve(true); } });
+  const agent = { id: 's' };
+  const status = value => listeners.get('agent/status')({ agent, status: value });
+  status('running');
+  listeners.get('session/event')({ id: 's' }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } });
+  assert.equal(sent.filter(x => x.kind === 'stopped').length, 0);
+  status('idle'); t.mock.timers.tick(400); status('running'); t.mock.timers.tick(1000);
+  assert.equal(sent.filter(x => x.kind === 'stopped').length, 0);
+  listeners.get('agent/error')({ agent });
+  listeners.get('session/event')({ id: 's' }, { type: 'turn/end', data: { turn: 2, reason: { kind: 'error' } } });
+  status('idle'); t.mock.timers.tick(801);
+  assert.equal(sent.filter(x => x.kind === 'stopped').length, 1);
+  assert.equal(sent.find(x => x.kind === 'stopped').title, '任务本轮失败');
+  status('idle'); for (const fn of cleanups) fn(); t.mock.timers.tick(1000);
+  assert.equal(sent.filter(x => x.kind === 'stopped').length, 1);
 });
 
 test('bounded notification queue and close prevent unbounded work', async t => {

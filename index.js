@@ -63,7 +63,7 @@ export async function apply(ctx, config = {}) {
   const tests = new Map();
   const routes = [
     ['/dsh-notifications/config', 'GET'], ['/dsh-notifications/diagnostics', 'GET'], ['/dsh-notifications/subscribe', 'POST'],
-    ['/dsh-notifications/unsubscribe', 'POST'], ['/dsh-notifications/test', 'POST'],
+    ['/dsh-notifications/unsubscribe', 'POST'], ['/dsh-notifications/test', 'POST'], ['/dsh-notifications/preferences', 'POST'],
     ...[...assets.keys()].map(path => [path, 'GET']),
   ];
   for (const [path, method] of routes) {
@@ -84,7 +84,8 @@ export async function apply(ctx, config = {}) {
         if (path.endsWith('/diagnostics')) { reply(res, 200, diagnostics); return; }
         if (method === 'GET') { reply(res, 200, { publicKey: store.publicKey }); return; }
         const body = await readJson(req);
-        if (path.endsWith('/subscribe')) await store.subscribe(body.subscription);
+        if (path.endsWith('/preferences')) { reply(res, 200, { preferences: await store.preferences(body.endpoint, body.preferences) }); return; }
+        if (path.endsWith('/subscribe')) await store.subscribe(body.subscription, body.preferences);
         else if (path.endsWith('/unsubscribe')) await store.unsubscribe(body.endpoint);
         else {
           const endpoint = validateEndpoint(body.endpoint);

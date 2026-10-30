@@ -68,6 +68,14 @@ Ordinary iOS Safari tabs are not the supported push installation mode. The deplo
 
 DSH and its outbound proxy must stay running. Device connectivity, Focus modes, battery restrictions, browser force quit and push-provider policy can delay or suppress display. Provider acceptance is not proof of OS display. Same event/session notifications may merge by tag; TTL is five minutes. Idle means execution stopped, not necessarily successful completion. This is not a notification for every token, tool step, todo change, external job or schedule.
 
+## Notification nodes / 通知节点
+
+Quiet defaults: notify only when the Agent is actually stopped (any outcome), waiting for approval, or waiting for a user choice/input. Start/running, runtime errors, individual tool failures and each turn end are off by default. Turn-end alone may be followed by continued processing. Idle is coalesced for 800ms and cancelled if work resumes, avoiding duplicate error/end/idle notifications by default.
+
+Settings → Notifications has seven independent per-device checkboxes, while the sidebar bell remains the device master toggle. Subscription preferences persist on the Host and apply even when the page is closed. Existing subscriptions migrate to quiet defaults without replacing VAPID keys or subscriptions. Unsubscribed devices can preselect nodes in local browser storage; only booleans are stored there. Manual tests bypass node filtering. Each origin/device is independent.
+
+默认仅通知真正停止处理、等待批准和等待用户选择/输入。中间状态默认关闭；设置 → 通知可单独开启每个节点。偏好按设备订阅保存在 Host，页面关闭仍生效；老订阅自动采用安静默认设置，侧栏仍为总开关。启用中间节点会增加频率，每轮结束不代表整个处理停止。
+
 ## Notification detail and privacy / 通知内容和隐私
 
 Notifications broadcast to **all devices subscribed to this Host** and may appear on lock screens. They may include a session title, failed tool name, turn/step number, actual turn-end reason, and up to 140 characters of the last assistant text in a completed turn. A completed turn is not necessarily completion of a longer goal; an individual tool failure is not necessarily final task failure. Detailed delivery on real devices has not yet been verified.

@@ -97,6 +97,12 @@ export async function readJson(req, maxBytes = 16384) {
   } finally { clearTimeout(timeout); }
 }
 
+export const DEFAULT_PREFERENCES = Object.freeze({ stopped: true, approval: true, question: true, running: false, error: false, 'tool-error': false, turn: false });
+export function validatePreferences(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !Object.hasOwn(DEFAULT_PREFERENCES, key) || typeof value[key] !== 'boolean')) throw new HttpError(400, '无效通知节点设置');
+  return { ...DEFAULT_PREFERENCES, ...value };
+}
+
 export async function openStore({ storageDir, profileDir = process.env.DSH_PROFILE_DIR, webPush, maxSubscriptions = 32 }) {
   if (!Number.isInteger(maxSubscriptions) || maxSubscriptions < 1 || maxSubscriptions > 256) throw new Error('maxSubscriptions 必须在 1–256 之间');
   if (!storageDir && !profileDir) throw new Error('无法确定通知存储目录：请配置 storageDir，或通过 DSH profile 启动以提供 profileContext.dir（兼容 DSH_PROFILE_DIR）；不会写入任意工作目录');
@@ -109,7 +115,7 @@ export async function openStore({ storageDir, profileDir = process.env.DSH_PROFI
   if (!state) state = { version: 1, vapid: webPush.generateVAPIDKeys(), subscriptions: [] };
   if (state.version !== 1 || typeof state.vapid?.publicKey !== 'string' || typeof state.vapid?.privateKey !== 'string'
     || !Array.isArray(state.subscriptions)) throw new Error('通知存储损坏；拒绝覆盖现有 VAPID 密钥');
-  const subscriptions = new Map(state.subscriptions.map(s => { const item = validateSubscription(s); return [item.endpoint, item]; }));
+  const subscriptions = new Map(state.subscriptions.map(s => { const item = { ...validateSubscription(s), preferences: validatePreferences(s.preferences) }; return [item.endpoint, item]; }));
   let queue = Promise.resolve();
   async function save() {
     const temp = join(directory, `state.${randomUUID()}.tmp`);
@@ -131,11 +137,27 @@ export async function openStore({ storageDir, profileDir = process.env.DSH_PROFI
     vapid: Object.freeze({ ...state.vapid }),
     list: () => [...subscriptions.values()],
     get: endpoint => subscriptions.get(endpoint),
-    subscribe: value => {
+    preferences: (endpoint, value) => {
+      const key = validateEndpoint(endpoint);
+      if (value === undefined) {
+        const item = subscriptions.get(key);
+        if (!item) throw new HttpError(404, '未找到订阅');
+        return validatePreferences(item.preferences);
+      }
+      const preferences = validatePreferences(value);
+      return mutate(() => {
+        const item = subscriptions.get(key);
+        if (!item) throw new HttpError(404, '未找到订阅');
+        subscriptions.set(key, { ...item, preferences });
+        return preferences;
+      });
+    },
+    subscribe: (value, preferences) => {
       const subscription = validateSubscription(value);
+      const settings = preferences === undefined ? undefined : validatePreferences(preferences);
       return mutate(() => {
         if (!subscriptions.has(subscription.endpoint) && subscriptions.size >= maxSubscriptions) throw new HttpError(409, '订阅设备已达上限');
-        subscriptions.set(subscription.endpoint, subscription);
+        subscriptions.set(subscription.endpoint, { ...subscription, preferences: settings ?? subscriptions.get(subscription.endpoint)?.preferences ?? { ...DEFAULT_PREFERENCES } });
       });
     },
     unsubscribe: endpoint => mutate(() => subscriptions.delete(validateEndpoint(endpoint))),
@@ -171,7 +193,7 @@ export function createNotifier({ store, webPush, subject = 'mailto:notifications
   }
   function dispatch(payload, endpoint) {
     if (closed || pending >= maxPending) return Promise.resolve(false);
-    const targets = endpoint ? [store.get(endpoint)].filter(Boolean) : store.list();
+    const targets = (endpoint ? [store.get(endpoint)].filter(Boolean) : store.list()).filter(item => !payload.kind || validatePreferences(item.preferences)[payload.kind] === true);
     if (!targets.length) return Promise.resolve(false);
     pending++;
     const job = (async () => {
@@ -194,6 +216,10 @@ export function safeExcerpt(value, limit = 140) {
 }
 
 export function registerListeners(ctx, notifier, diagnostic = () => {}) {
+  const pending = new Map();
+  const timers = new Map();
+  const failed = new Set();
+  ctx.effect?.(() => () => { for (const timer of timers.values()) clearTimeout(timer); timers.clear(); pending.clear(); failed.clear(); });
   function taskName(agent) {
     try {
       const session = agent?.id && ctx.get?.('sessions')?.get(agent.id);
@@ -207,13 +233,36 @@ export function registerListeners(ctx, notifier, diagnostic = () => {}) {
     const confirmation = kind === 'approval' || kind === 'question';
     const trace = phase => { if (confirmation) { try { diagnostic(kind, phase); } catch {} } };
     trace('event received');
-    try { void Promise.resolve(notifier.dispatch({ title, body, tag: `dsh-${kind}-${agent?.id ?? 'global'}`, url: '/' }))
+    try { void Promise.resolve(notifier.dispatch({ title, body, kind, tag: `dsh-${kind}-${agent?.id ?? 'global'}`, url: '/' }))
       .then(sent => trace(sent ? 'provider accepted' : 'send failed or no device')).catch(() => trace('send failed')); } catch { trace('dispatch failed'); }
   }
   ctx.on('agent/status', ({ agent, status }) => {
-    if (status === 'running') notify('任务已开始', 'DSH 正在处理任务。', 'running', agent);
+    if (!agent?.id) return;
+    clearTimeout(timers.get(agent.id)); timers.delete(agent.id);
+    if (status === 'running') {
+      pending.delete(agent.id); failed.delete(agent.id);
+      notify('任务已开始', 'DSH 正在处理任务。', 'running', agent);
+    } else if (status === 'idle') {
+      // Coalesce brief idle/running transitions; a turn end alone does not mean stopped.
+      const timer = setTimeout(() => {
+        timers.delete(agent.id);
+        const result = pending.get(agent.id); pending.delete(agent.id);
+        notify(result?.title ?? (failed.has(agent.id) ? '任务已停止（发生错误）' : '任务已停止'), result?.body ?? '处理已停止，请打开 DSH 查看结果。', 'stopped', agent);
+        failed.delete(agent.id);
+      }, 800);
+      timer.unref?.(); timers.set(agent.id, timer);
+    }
   });
-  ctx.on('agent/error', ({ agent, turn, step }) => notify('任务发生错误', `第 ${Number.isSafeInteger(turn) ? turn : '?'} 轮 · 第 ${Number.isSafeInteger(step) ? step : '?'} 步，请打开 DSH 查看详情。`, 'error', agent));
+  ctx.on('agent/error', ({ agent, turn, step }) => {
+    if (agent?.id) failed.add(agent.id);
+    notify('任务发生错误', `第 ${Number.isSafeInteger(turn) ? turn : '?'} 轮 · 第 ${Number.isSafeInteger(step) ? step : '?'} 步，请打开 DSH 查看详情。`, 'error', agent);
+  });
+  ctx.on('agent/disposed', ({ agent }) => {
+    clearTimeout(timers.get(agent?.id)); timers.delete(agent?.id);
+    const result = pending.get(agent?.id);
+    if (result) notify(result.title, result.body, 'stopped', agent);
+    pending.delete(agent?.id); failed.delete(agent?.id);
+  });
   ctx.on('tools/result', (exec, result) => {
     if (!result?.isError || !exec?.agent) return;
     const tool = typeof exec.name === 'string' && /^[a-zA-Z][a-zA-Z0-9_.-]{0,39}$/.test(exec.name) ? exec.name : '工具';
@@ -229,7 +278,9 @@ export function registerListeners(ctx, notifier, diagnostic = () => {}) {
       const state = ctx.get?.('sessionProjections')?.stateOf(session, 'notification-detail');
       if (event.data.reason.kind === 'completed' && state?.turn === event.data.turn) excerpt = state.summary || '';
     } catch { /* optional detail must not interfere with the task */ }
-    notify(outcome[0], `${outcome[1]}${excerpt ? `：${excerpt}` : '，请打开 DSH 查看详情。'}`, 'turn', { id: session.id });
+    const body = `${outcome[1]}${excerpt ? `：${excerpt}` : '，请打开 DSH 查看详情。'}`;
+    pending.set(session.id, { title: outcome[0], body });
+    notify(outcome[0], body, 'turn', { id: session.id });
   });
   ctx.on('approval/request', (request, next) => {
     notify('需要你的批准', '请打开 DSH 审核待处理操作。', 'approval', request.agent);

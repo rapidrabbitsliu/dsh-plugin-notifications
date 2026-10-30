@@ -48,8 +48,8 @@ test('Host integration: real VAPID, authenticated routes, subscription and clean
   await apply(ctx, { storageDir: directory });
   await access(join(directory, 'state.json'));
   await assert.rejects(access(join(directory, 'unused-profile', 'dsh-notifications', 'state.json')));
-  assert.equal(routes.size, 7);
-  assert.equal(events.size, 6);
+  assert.equal(routes.size, 8);
+  assert.equal(events.size, 7);
   async function call(path, method = 'GET', body, authenticated = true) {
     const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
     req.method = method;
@@ -84,6 +84,12 @@ test('Host integration: real VAPID, authenticated routes, subscription and clean
   ecdh.generateKeys();
   const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/integration-test', keys: { p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
   assert.equal((await call('/subscribe', 'POST', { subscription })).status, 200);
+  assert.equal((await call('/preferences', 'POST', { endpoint: subscription.endpoint }, false)).status, 401);
+  const defaults = JSON.parse((await call('/preferences', 'POST', { endpoint: subscription.endpoint })).body).preferences;
+  assert.equal(defaults.stopped, true); assert.equal(defaults.running, false); assert.equal(defaults.turn, false);
+  assert.equal((await call('/preferences', 'POST', { endpoint: subscription.endpoint, preferences: { unknown: true } })).status, 400);
+  const changed = JSON.parse((await call('/preferences', 'POST', { endpoint: subscription.endpoint, preferences: { stopped: false, running: true } })).body).preferences;
+  assert.equal(changed.stopped, false); assert.equal(changed.running, true);
   assert.equal((await call('/unsubscribe', 'POST', { endpoint: subscription.endpoint })).status, 200);
   assert.equal((await call('/test', 'POST', { endpoint: subscription.endpoint })).status, 404);
   for (const dispose of cleanups.reverse()) await dispose();
