@@ -20,7 +20,7 @@ dsh-plugin-notifications
 
 For an agent managing DSH, use the supported `plugin_manager` tool with `action: install_bundle`, `target: dsh-plugin-notifications`. Do not edit DSH core or profile package files manually. Refresh the existing page after installation. Do not install alongside another copy using the same `/dsh-notifications/` routes (including the development package `@local/dsh-plugin-notifications`). Arrange replacement outside active work if lifecycle dependencies require maintenance.
 
-The default storage is `$DSH_PROFILE_DIR/dsh-notifications`. If that variable is absent, configure an absolute private `storageDir` **before enabling** the plugin; initialization intentionally fails rather than writing credentials in an arbitrary working directory.
+Storage resolution: explicit `storageDir` takes priority; otherwise use `<ctx.profileContext.dir>/dsh-notifications`, obtained from DSH's profileContext service. `DSH_PROFILE_DIR` is only a legacy fallback, not a required process environment variable. Without any reliable profile location, configure an absolute private `storageDir` before enabling; initialization intentionally fails rather than writing credentials in an arbitrary working directory. Existing explicit storage locations remain unchanged.
 
 Configure row `task-notifications` through DSH's composition/configuration facilities, for example:
 

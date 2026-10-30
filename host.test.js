@@ -1,11 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createECDH, randomBytes } from 'node:crypto';
 import { apply } from './index.js';
+
+test('Host initializes from profileContext.dir without relying on shell environment', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-notifications-profile-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cleanups = [];
+  const previous = process.env.DSH_PROFILE_DIR;
+  delete process.env.DSH_PROFILE_DIR;
+  try {
+    await apply({
+      get: key => key === 'profileContext' ? { dir: directory } : undefined,
+      connection: {},
+      webServer: { register: () => () => {} },
+      effect: fn => { const dispose = fn(); if (dispose) cleanups.push(dispose); },
+      on: () => {},
+    });
+    await access(join(directory, 'dsh-notifications', 'state.json'));
+  } finally {
+    for (const dispose of cleanups.reverse()) dispose();
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR;
+    else process.env.DSH_PROFILE_DIR = previous;
+  }
+});
 
 test('Host integration: real VAPID, authenticated routes, subscription and cleanup', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-notifications-host-'));
@@ -15,12 +37,15 @@ test('Host integration: real VAPID, authenticated routes, subscription and clean
   const cleanups = [];
   const peer = { id: 'browser-owner', principal: { kind: 'owner' } };
   const ctx = {
+    get: key => key === 'profileContext' ? { dir: join(directory, 'unused-profile') } : undefined,
     connection: { browserPeer: peer, admit: req => req.headers.cookie === 'test-owner' ? { peer } : { rejection: 401 } },
     webServer: { register: route => { assert.equal(routes.has(route.path), false); routes.set(route.path, route.handler); return () => routes.delete(route.path); } },
     effect: fn => { const dispose = fn(); if (dispose) cleanups.push(dispose); },
     on: (name, fn) => { events.set(name, fn); cleanups.push(() => events.delete(name)); },
   };
   await apply(ctx, { storageDir: directory });
+  await access(join(directory, 'state.json'));
+  await assert.rejects(access(join(directory, 'unused-profile', 'dsh-notifications', 'state.json')));
   assert.equal(routes.size, 7);
   assert.equal(events.size, 4);
   async function call(path, method = 'GET', body, authenticated = true) {

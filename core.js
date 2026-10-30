@@ -99,7 +99,7 @@ export async function readJson(req, maxBytes = 16384) {
 
 export async function openStore({ storageDir, profileDir = process.env.DSH_PROFILE_DIR, webPush, maxSubscriptions = 32 }) {
   if (!Number.isInteger(maxSubscriptions) || maxSubscriptions < 1 || maxSubscriptions > 256) throw new Error('maxSubscriptions 必须在 1–256 之间');
-  if (!storageDir && !profileDir) throw new Error('请配置 storageDir 或设置 DSH_PROFILE_DIR；不会写入工作目录或 profile package');
+  if (!storageDir && !profileDir) throw new Error('无法确定通知存储目录：请配置 storageDir，或通过 DSH profile 启动以提供 profileContext.dir（兼容 DSH_PROFILE_DIR）；不会写入任意工作目录');
   const directory = storageDir ? resolve(storageDir) : join(resolve(profileDir), 'dsh-notifications');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const file = join(directory, 'state.json');

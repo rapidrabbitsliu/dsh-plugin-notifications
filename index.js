@@ -11,7 +11,7 @@ export async function apply(ctx, config = {}) {
   const publicOrigin = config.publicOrigins ? config.publicOrigins.map(normalizeOrigin) : config.publicOrigin ? normalizeOrigin(config.publicOrigin) : undefined;
   const subject = config.vapidSubject ?? 'https://github.com/rapidrabbitsliu/dsh-plugin-notifications';
   if (typeof subject !== 'string' || !/^(mailto:|https:\/\/)/.test(subject)) throw new Error('vapidSubject 必须为 mailto: 或 HTTPS URL');
-  const store = await openStore({ storageDir: config.storageDir, webPush, maxSubscriptions: config.maxSubscriptions ?? 32 });
+  const store = await openStore({ storageDir: config.storageDir, profileDir: ctx.get('profileContext')?.dir, webPush, maxSubscriptions: config.maxSubscriptions ?? 32 });
   let agent, httpProxy;
   if (config.proxyUrl) {
     let proxy;
