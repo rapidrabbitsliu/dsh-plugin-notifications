@@ -16,6 +16,7 @@ test('Host initializes from profileContext.dir without relying on shell environm
   try {
     await apply({
       get: key => key === 'profileContext' ? { dir: directory } : undefined,
+      inject: () => {},
       connection: {},
       webServer: { register: () => () => {} },
       effect: fn => { const dispose = fn(); if (dispose) cleanups.push(dispose); },
@@ -38,6 +39,7 @@ test('Host integration: real VAPID, authenticated routes, subscription and clean
   const peer = { id: 'browser-owner', principal: { kind: 'owner' } };
   const ctx = {
     get: key => key === 'profileContext' ? { dir: join(directory, 'unused-profile') } : undefined,
+    inject: () => {},
     connection: { browserPeer: peer, admit: req => req.headers.cookie === 'test-owner' ? { peer } : { rejection: 401 } },
     webServer: { register: route => { assert.equal(routes.has(route.path), false); routes.set(route.path, route.handler); return () => routes.delete(route.path); } },
     effect: fn => { const dispose = fn(); if (dispose) cleanups.push(dispose); },
@@ -47,7 +49,7 @@ test('Host integration: real VAPID, authenticated routes, subscription and clean
   await access(join(directory, 'state.json'));
   await assert.rejects(access(join(directory, 'unused-profile', 'dsh-notifications', 'state.json')));
   assert.equal(routes.size, 7);
-  assert.equal(events.size, 4);
+  assert.equal(events.size, 6);
   async function call(path, method = 'GET', body, authenticated = true) {
     const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
     req.method = method;

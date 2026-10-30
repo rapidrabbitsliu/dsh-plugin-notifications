@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises';
 import webPush from 'web-push';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import https from 'node:https';
-import { HttpError, authorize, normalizeOrigin, readJson, openStore, createNotifier, registerListeners, validateEndpoint } from './core.js';
+import { z } from 'zod';
+import { HttpError, authorize, normalizeOrigin, readJson, openStore, createNotifier, registerListeners, validateEndpoint, safeExcerpt } from './core.js';
 
 export const name = 'dsh-notifications';
 export const inject = ['webServer', 'connection'];
@@ -28,6 +29,20 @@ export async function apply(ctx, config = {}) {
   }
   const notifier = createNotifier({ store, webPush, subject, agent, proxy: httpProxy, warn: message => ctx.logger?.warn?.(message) });
   ctx.effect(() => () => { notifier.close(); });
+  ctx.inject(['sessionProjections'], inner => {
+    inner.sessionProjections.register({
+      key: 'notification-detail', stateVersion: 1,
+      stateSchema: z.object({ turn: z.number().nullable(), summary: z.string().max(140) }),
+      init: () => ({ turn: null, summary: '' }),
+      apply(state, event) {
+        if (event.type === 'turn/start') return { turn: event.data.turn, summary: '' };
+        if (event.type !== 'assistant/message' || event.data.turn !== state.turn || event.data.interrupted) return state;
+        const blocks = event.data.message?.content;
+        const summary = Array.isArray(blocks) ? safeExcerpt(blocks.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n')) : '';
+        return summary === state.summary ? state : { ...state, summary };
+      },
+    });
+  });
   const diagnostics = { question: { received: 0, accepted: 0, failed: 0 }, approval: { received: 0, accepted: 0, failed: 0 } };
   registerListeners(ctx, notifier, (kind, phase) => {
     const counter = diagnostics[kind];

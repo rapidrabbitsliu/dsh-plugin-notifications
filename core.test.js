@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { HttpError, validateEndpoint, validateSubscription, authorize, normalizeOrigin, readJson, openStore, createNotifier, registerListeners } from './core.js';
+import { HttpError, validateEndpoint, validateSubscription, authorize, normalizeOrigin, readJson, openStore, createNotifier, registerListeners, safeExcerpt } from './core.js';
 
 const endpoint = 'https://fcm.googleapis.com/fcm/send/device1';
 const subscription = (url = endpoint) => ({ endpoint: url, keys: { p256dh: Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 1)]).toString('base64url'), auth: Buffer.alloc(16, 2).toString('base64url') } });
@@ -176,7 +176,7 @@ test('event listeners prepend waterfalls, return next unchanged, never await pus
   listeners.get('agent/status').listener({ agent: { id: 'session1' }, status: 'idle' });
   listeners.get('agent/status').listener({ agent: { id: 'session1' }, status: 'running' });
   listeners.get('agent/error').listener({ agent: { id: 'session1' }, error: Error('TOP SECRET') });
-  assert.equal(sent.length, 5);
+  assert.equal(sent.length, 4);
   assert.equal(sent[0].title, '需要你的批准');
   assert.equal(sent[1].title, '需要你的回答');
   assert.notEqual(sent[0].tag, sent[1].tag);
@@ -185,6 +185,27 @@ test('event listeners prepend waterfalls, return next unchanged, never await pus
   for (const payload of sent) assert.deepEqual(Object.keys(payload).sort(), ['body', 'tag', 'title', 'url']);
   const thrown = Error('next rejection');
   assert.throws(() => listeners.get('approval/request').listener({}, () => { throw thrown; }), e => e === thrown);
+});
+
+test('summary filter removes sensitive lines, paths, URLs and limits characters', () => {
+  const text = safeExcerpt('测试通过\nTOKEN=supersecret\n查看 https://private.example/a\n访问 C:\\Users\\person\\file\n完成');
+  assert.equal(text, '测试通过 完成');
+  assert.equal(Array.from(safeExcerpt('测'.repeat(200))).length, 140);
+});
+
+test('turn notifications use bounded redacted summaries and precise outcomes', () => {
+  const listeners = new Map(), sent = [];
+  const session = { id: 's' };
+  const ctx = { on: (name, cb) => listeners.set(name, cb), get: name => ({ sessions: { get: () => session }, sessionTitle: { get: () => ({ title: '修复通知' }) }, sessionProjections: { stateOf: () => ({ turn: 1, summary: '修复已完成，测试通过' }) } })[name] };
+  registerListeners(ctx, { dispatch: value => { sent.push(value); return Promise.resolve(true); } });
+  listeners.get('session/event')(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } });
+  listeners.get('session/event')(session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { message: 'SECRET' } } } });
+  assert.equal(sent[0].title, '任务本轮完成');
+  assert.match(sent[0].body, /修复通知.*修复已完成/);
+  assert.equal(sent[1].title, '任务本轮失败');
+  listeners.get('tools/result')({ agent: { id: 's' }, name: 'pwsh', arguments: { command: 'PRIVATE COMMAND' } }, { isError: true, error: { message: 'SECRET' } });
+  assert.match(sent[2].body, /pwsh.*失败/);
+  assert.doesNotMatch(JSON.stringify(sent), /SECRET|PRIVATE COMMAND/);
 });
 
 test('synchronously throwing notifier cannot swallow next; rejected pushes are handled', async () => {

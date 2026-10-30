@@ -186,9 +186,24 @@ export function createNotifier({ store, webPush, subject = 'mailto:notifications
   return { dispatch, close: () => { closed = true; }, drain: () => Promise.allSettled([...jobs]) };
 }
 
+// Best effort, not a guarantee: omit entire unsafe lines rather than forwarding values.
+export function safeExcerpt(value, limit = 140) {
+  if (typeof value !== 'string') return '';
+  const lines = value.split(/\r?\n/).filter(line => !/(?:secret|token|password|passwd|credential|api[ _-]?key|authorization|bearer|私钥|密码|密钥|令牌|凭证|-----BEGIN|https?:\/\/|\b[A-Za-z]:\\|(?:^|\s)\/(?:Users|home|etc|var|tmp)\/|\b(?:sk|ghp|gho|npm)[-_][A-Za-z0-9_-]+)/i.test(line));
+  return Array.from(lines.join(' ').replace(/[`*_#\[\]]/g, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, limit).join('');
+}
+
 export function registerListeners(ctx, notifier, diagnostic = () => {}) {
+  function taskName(agent) {
+    try {
+      const session = agent?.id && ctx.get?.('sessions')?.get(agent.id);
+      return safeExcerpt(session && ctx.get?.('sessionTitle')?.get(session)?.title, 60);
+    } catch { return ''; }
+  }
   function notify(title, body, kind, agent) {
-    // No tool arguments, approval reasons, question text, or exception text leaves DSH.
+    // No raw tool arguments, approval reasons, question text, or exception text.
+    const name = taskName(agent);
+    if (name) body = `${name} · ${body}`;
     const confirmation = kind === 'approval' || kind === 'question';
     const trace = phase => { if (confirmation) { try { diagnostic(kind, phase); } catch {} } };
     trace('event received');
@@ -196,10 +211,26 @@ export function registerListeners(ctx, notifier, diagnostic = () => {}) {
       .then(sent => trace(sent ? 'provider accepted' : 'send failed or no device')).catch(() => trace('send failed')); } catch { trace('dispatch failed'); }
   }
   ctx.on('agent/status', ({ agent, status }) => {
-    if (status === 'idle') notify('任务已暂停或完成', '请打开 DSH 查看任务结果。', 'idle', agent);
-    else if (status === 'running') notify('任务已开始', 'DSH 正在处理任务。', 'running', agent);
+    if (status === 'running') notify('任务已开始', 'DSH 正在处理任务。', 'running', agent);
   });
-  ctx.on('agent/error', ({ agent }) => notify('任务发生错误', '请打开 DSH 查看详情。', 'error', agent));
+  ctx.on('agent/error', ({ agent, turn, step }) => notify('任务发生错误', `第 ${Number.isSafeInteger(turn) ? turn : '?'} 轮 · 第 ${Number.isSafeInteger(step) ? step : '?'} 步，请打开 DSH 查看详情。`, 'error', agent));
+  ctx.on('tools/result', (exec, result) => {
+    if (!result?.isError || !exec?.agent) return;
+    const tool = typeof exec.name === 'string' && /^[a-zA-Z][a-zA-Z0-9_.-]{0,39}$/.test(exec.name) ? exec.name : '工具';
+    notify('执行环节失败', `${tool} 执行失败，请打开 DSH 查看详情。`, 'tool-error', exec.agent);
+  });
+  ctx.on('session/event', (session, event) => {
+    if (event?.type !== 'turn/end') return;
+    const reasons = { completed: ['任务本轮完成', '已完成'], aborted: ['任务已取消', '已取消'], blocked: ['任务受阻', '需要处理阻塞'], error: ['任务本轮失败', '执行发生错误'], 'max-tokens': ['任务未完成', '达到输出上限'], interrupted: ['任务被中断', '已中断'], forked: ['任务已分叉', '本轮因分叉结束'] };
+    const outcome = reasons[event.data?.reason?.kind];
+    if (!outcome) return;
+    let excerpt = '';
+    try {
+      const state = ctx.get?.('sessionProjections')?.stateOf(session, 'notification-detail');
+      if (event.data.reason.kind === 'completed' && state?.turn === event.data.turn) excerpt = state.summary || '';
+    } catch { /* optional detail must not interfere with the task */ }
+    notify(outcome[0], `${outcome[1]}${excerpt ? `：${excerpt}` : '，请打开 DSH 查看详情。'}`, 'turn', { id: session.id });
+  });
   ctx.on('approval/request', (request, next) => {
     notify('需要你的批准', '请打开 DSH 审核待处理操作。', 'approval', request.agent);
     return next();

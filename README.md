@@ -7,7 +7,7 @@ Independent DSH Host/Client plugin for encrypted Web Push task notifications. No
 - All workspaces and sessions on the same Host: agent running/idle, errors, approval requests and user questions.
 - Settings → Notifications: permission, device toggle and test notification.
 - Sidebar bell: one-click toggle for **this device**, not other devices. No composer clutter.
-- Push only generic messages: no conversation, tool arguments, approval reasons or question contents leave the Host.
+- Notifications may include session titles, failed tool names, turn outcomes and up to 140 characters of assistant result text. Tool arguments, approval reasons, question contents and raw exceptions are not deliberately sent. See the privacy warning below.
 - A notification focuses an existing same-origin DSH window or opens the homepage. It does **not** approve, answer or execute anything; inline notification replies are not implemented.
 
 ## Install / 安装
@@ -67,6 +67,14 @@ This exemption does not cover LAN/Tailscale IPs or custom hostnames; remote devi
 Ordinary iOS Safari tabs are not the supported push installation mode. The deployment must provide a standalone web app manifest for Home Screen installation; this plugin does not replace DSH's manifest or root service worker. LAN/VPN deployments require devices to reach that origin for enabling, opening and answering. Do not expose a token-free owner proxy publicly.
 
 DSH and its outbound proxy must stay running. Device connectivity, Focus modes, battery restrictions, browser force quit and push-provider policy can delay or suppress display. Provider acceptance is not proof of OS display. Same event/session notifications may merge by tag; TTL is five minutes. Idle means execution stopped, not necessarily successful completion. This is not a notification for every token, tool step, todo change, external job or schedule.
+
+## Notification detail and privacy / 通知内容和隐私
+
+Notifications broadcast to **all devices subscribed to this Host** and may appear on lock screens. They may include a session title, failed tool name, turn/step number, actual turn-end reason, and up to 140 characters of the last assistant text in a completed turn. A completed turn is not necessarily completion of a longer goal; an individual tool failure is not necessarily final task failure. Detailed delivery on real devices has not yet been verified.
+
+The filter drops lines matching common credential markers, URLs and some file paths and limits length, but **cannot guarantee removal of all secrets or private information**. Result summaries are also stored in DSH's profile projection cache. Avoid subscribing untrusted/shared devices or using this version for sensitive content that must not appear in notifications. Tool arguments, commands, approval reasons, question text and raw exception details are not intentionally included; they can nevertheless appear in assistant-generated text in forms the filter does not recognize.
+
+通知会向本 Host 所有订阅设备广播，可能出现在锁屏；内容可包括会话标题、失败的工具名称、轮次及最多 140 字的助手结果摘要。过滤规则不能保证识别所有敏感信息，摘要也会保存在 profile 投影缓存。涉及敏感任务时不要在不可信设备订阅。本轮完成不等于长期目标已经完成，单次工具失败也不等于最终失败。
 
 ## Security / 安全
 

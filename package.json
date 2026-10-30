@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-notifications",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Cross-device Web Push notifications for DSH task status and user confirmations",
   "type": "module",
   "exports": {
@@ -26,7 +26,8 @@
   },
   "dependencies": {
     "socks-proxy-agent": "^10.1.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "zod": "^4.6.7"
   },
   "dsh": {
     "bundle": {
