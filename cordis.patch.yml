@@ -1,0 +1,4 @@
+- insert:
+    - id: task-notifications
+      name: dsh-plugin-notifications
+      config: {}

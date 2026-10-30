@@ -1,0 +1,6 @@
+node_modules/
+.notification-state/
+.npmrc
+.env*
+*.tgz
+*.key
